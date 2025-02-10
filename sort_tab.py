@@ -5,21 +5,35 @@ from time import strftime
 from random import random
 import re
 import json
+import os
 
 inventory = []
 sorted_inventory = []
 moves = 0
 
-start_xy = (49, 163)
-end_xy = (710, 817)
-cell_width = 0
-cell_height = 0
+start_xy, end_xy, cell_width, cell_height, sort_index = None, None, None, None, None
 
-sort_index = {
-    "Waystones": 4,
-    "Tablet": 2,
-    "Stackable Currency": 1,
-}
+def read_config():
+    global start_xy, end_xy, cell_width, cell_height, sort_index
+    basedir = os.path.dirname(__file__)
+    with open(os.path.join(basedir, "config.json"), "r") as f:
+        config = json.load(f)
+        start_xy = config["start_xy"]
+        end_xy = config["end_xy"]
+        sort_index = config["sort_index"]
+    print("loaded config.")
+    print(json.dumps(config, indent=4))
+
+def write_config():
+    basedir = os.path.dirname(__file__)
+    config = {
+        "start_xy": start_xy,
+        "end_xy": end_xy,
+        "sort_index": sort_index
+    }
+    with open(os.path.join(basedir, "config.json"), "w") as f:
+        json.dump(config, f, indent=4)
+    print("config saved.")
 
 def get_clipboard():
     try:
@@ -40,7 +54,10 @@ def clear_clipboard():
     win32clipboard.CloseClipboard()
 
 def movetocell(x, y):
-    mouse.move(start_xy[0] + (cell_width * x), start_xy[1] + (cell_height * y))
+    real_x = start_xy[0] + (cell_width * x)
+    real_y = start_xy[1] + (cell_height * y)
+    #print(f"moving mouse to cell {x},{y} at {real_x}, {real_y} ")
+    mouse.move(real_x, real_y)
 
 def read_cell(x,y,i):
     sleep(0.025)
@@ -57,6 +74,7 @@ def read_cell(x,y,i):
             "name": None,
             "raw": None,
             "item_class": None,
+            "item_level": None,
             "waystone_tier": None,
             "waystone_drop_chance": None,
             "preferred_type": 0
@@ -65,6 +83,11 @@ def read_cell(x,y,i):
         name = (contents.split("\n")[2]).strip()
         if name:
             cell['name'] = name
+            print(f"Identified item: {name}")
+        ilm = re.search(r"Item Level: (\d+)", contents)
+        il = int(ilm.group(1)) if ilm else None
+        if il:
+            cell["item_level"] = il
         icm = re.search(r"Item Class: ([\w ]+)", contents)
         ic = icm.group(1) if icm else None
         if ic in sort_index:
@@ -95,6 +118,9 @@ def swap_cell(cell, start=False):
     sleep(0.05)
 
 def recursive_swap(cell, start=False):
+    if keyboard.is_pressed('alt'):
+        print("alt pressed - exiting")
+        return
     if "new_index" in cell and cell["item_class"] is not None:
         if cell["i"] == cell["new_index"]:
             #print(f"cell {cell['i']} is sorted.")
@@ -107,6 +133,7 @@ def recursive_swap(cell, start=False):
         temp = inventory[cell["new_index"]]
         inventory[cell["new_index"]] = cell
         if temp:
+            print(f"target cell contained item, recursing into cell {cell['new_index']}.")
             recursive_swap(temp)
 
 def read_tab(size):
@@ -130,11 +157,12 @@ def read_tab(size):
     
     sorted_inventory = sorted( inventory, 
                                 reverse=True,
-                                key=lambda x: (  x["preferred_type"]       if x["preferred_type"]       is not None else 0,
+                                key=lambda x: ( x["preferred_type"]       if x["preferred_type"]       is not None else 0,
                                                 x["item_class"]           if x["item_class"]           is not None else "",
-                                                x["name"]                 if x["name"]                 is not None else "",
                                                 x["waystone_tier"]        if x["waystone_tier"]        is not None else 0, 
-                                                x["waystone_drop_chance"] if x["waystone_drop_chance"] is not None else 0
+                                                x["waystone_drop_chance"] if x["waystone_drop_chance"] is not None else 0,
+                                                x["item_level"]           if x["item_level"]           is not None else 0,
+                                                x["name"]                 if x["name"]                 is not None else ""
                                             ))
     for i in range(len(sorted_inventory)):
         sorted_inventory[i]["new_index"] = i
@@ -149,16 +177,20 @@ def read_tab(size):
         json.dump(sorted_inventory, f, indent=4)
     print("raw inventory saved.")
 
+read_config()
+
 print("listening for input...")
 while(1):
     sleep(0.5)
     if keyboard.is_pressed('ctrl') and keyboard.is_pressed('5'):
         start_xy = mouse.get_position()
         print(f"start_xy set to {start_xy}")
+        write_config()
 
     if keyboard.is_pressed('ctrl') and keyboard.is_pressed('6'):
         end_xy = mouse.get_position()
         print(f"end_xy set to {end_xy}")
+        write_config()
 
     if keyboard.is_pressed('ctrl') and keyboard.is_pressed('1'):
         inventory=[]
@@ -175,9 +207,9 @@ while(1):
         mouse.move(start_xy[0], start_xy[1])
         sleep(0.5)
         for i in range(len(inventory)):
-            #if keyboard.is_pressed('alt'):
-            #    print("alt pressed - exiting")
-            #    break
+            if keyboard.is_pressed('alt'):
+                print("alt pressed - exiting")
+                break
             recursive_swap(inventory[i], start=True)
         print(f"sorted in {moves} moves.")
     
